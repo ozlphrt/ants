@@ -1,0 +1,21 @@
+{
+  "name": "ants",
+  "private": true,
+  "version": "1.4.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3",
+    "@types/three": "^0.182.0",
+    "simplex-noise": "^4.0.3",
+    "three": "^0.182.0"
+  }
+}
