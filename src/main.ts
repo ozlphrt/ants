@@ -1,11 +1,12 @@
 import './style.css'
 import * as THREE from 'three'
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { Terrain } from './Terrain'
 import { Pheromones } from './Pheromones'
 import { Ants } from './Ants'
 import { Obstacles } from './Obstacles'
+import { defaultPheromoneConfig } from './PheromoneConfig'
 
 async function init() {
   // Initialize Rapier
@@ -56,7 +57,8 @@ async function init() {
   scene.add(foodLight)
 
   // System Setup
-  const pheromones = new Pheromones(renderer, 512)
+  const pheromoneConfig = { ...defaultPheromoneConfig }
+  const pheromones = new Pheromones(renderer, pheromoneConfig, 512)
   const terrain = new Terrain(100, 256)
 
   // Apply pheromone texture to terrain material
@@ -127,13 +129,15 @@ async function init() {
   scene.add(homeMarker)
   homeLight.position.set(homePos.x, 10, homePos.z)
 
-  // 2. Foods (5, smaller, orange)
+  // 2. Foods (5, smaller, orange, depletable)
   const foodPositions: THREE.Vector3[] = []
   const foodMeshes: THREE.Mesh[] = []
+  const foodQuantities: number[] = []
   const foodMat = new THREE.MeshStandardMaterial({ color: 0xff8800, emissive: 0xff4400 })
   for (let j = 0; j < 5; j++) {
     const fp = findSafePosition(1.8)
     foodPositions.push(fp)
+    foodQuantities.push(100)
     const foodMesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.9, 16, 16),
       foodMat
@@ -146,8 +150,9 @@ async function init() {
   // 3. Obstacles (consume entities list for placement)
   const obstacles = new Obstacles(scene, camera, renderer.domElement, world, controls, terrain, entities)
 
-  // Ants (500, slower)
-  const ants = new Ants(500, terrain, pheromones, obstacles, foodPositions, homePos)
+  const ants = new Ants(500, terrain, pheromones, obstacles, foodPositions, homePos, (foodIdx) => {
+    if (foodQuantities[foodIdx] > 0) foodQuantities[foodIdx]--
+  }, foodQuantities)
   scene.add(ants.mesh)
 
   // Clock
@@ -160,19 +165,56 @@ async function init() {
     <h1>Ant Colony 3D</h1>
     <div class="stat">Ants: 500</div>
     <div id="status" class="stat">Status: Simulating...</div>
+    <div class="params-panel">
+      <h3>Pheromone params</h3>
+      <label>Deposit (search): <input type="number" id="depositSearch" min="1" max="15" step="0.5" value="${pheromoneConfig.depositRateSearch}"></label>
+      <label>Deposit (return): <input type="number" id="depositReturn" min="2" max="25" step="0.5" value="${pheromoneConfig.depositRateReturn}"></label>
+      <label>Evaporation: <input type="number" id="evaporation" min="0.001" max="0.1" step="0.005" value="${pheromoneConfig.evaporationRate}"></label>
+      <label>Diffusion: <input type="number" id="diffusion" min="0.01" max="0.2" step="0.01" value="${pheromoneConfig.diffusionStrength}"></label>
+      <label>Sensing radius: <input type="number" id="sensing" min="5" max="25" step="1" value="${pheromoneConfig.sensingRadius}"></label>
+      <label>Antennae noise: <input type="number" id="antennaeNoise" min="0" max="0.8" step="0.05" value="${pheromoneConfig.antennaeNoise}"></label>
+      <label>Min trail strength: <input type="number" id="minTrailStrength" min="0.1" max="1" step="0.05" value="${pheromoneConfig.minTrailStrength}"></label>
+    </div>
   `
   document.body.appendChild(guiDiv)
 
-  // Animation loop
+  ;['depositSearch', 'depositReturn', 'evaporation', 'diffusion', 'sensing', 'antennaeNoise', 'minTrailStrength'].forEach((id) => {
+    const el = document.getElementById(id) as HTMLInputElement
+    if (el) el.addEventListener('input', () => {
+      pheromoneConfig.depositRateSearch = parseFloat((document.getElementById('depositSearch') as HTMLInputElement).value)
+      pheromoneConfig.depositRateReturn = parseFloat((document.getElementById('depositReturn') as HTMLInputElement).value)
+      pheromoneConfig.evaporationRate = parseFloat((document.getElementById('evaporation') as HTMLInputElement).value)
+      pheromoneConfig.diffusionStrength = parseFloat((document.getElementById('diffusion') as HTMLInputElement).value)
+      pheromoneConfig.sensingRadius = parseFloat((document.getElementById('sensing') as HTMLInputElement).value)
+      pheromoneConfig.antennaeNoise = parseFloat((document.getElementById('antennaeNoise') as HTMLInputElement).value)
+      pheromoneConfig.minTrailStrength = parseFloat((document.getElementById('minTrailStrength') as HTMLInputElement).value)
+      pheromones.setConfig(pheromoneConfig)
+    })
+  })
+
   function animate() {
     requestAnimationFrame(animate)
     const dt = Math.min(clock.getDelta(), 0.1)
 
-    // Update Systems
     pheromones.update()
     ants.update(dt)
     obstacles.update()
     world.step()
+
+    for (let i = 0; i < foodQuantities.length; i++) {
+      const q = foodQuantities[i]
+      foodMeshes[i].scale.setScalar(Math.max(0.15, q / 100))
+      if (q <= 0) {
+        const oldX = foodPositions[i].x
+        const oldZ = foodPositions[i].z
+        const idx = entities.findIndex(e => e.pos.x === oldX && e.pos.z === oldZ)
+        if (idx >= 0) entities.splice(idx, 1)
+        const np = findSafePosition(1.8)
+        foodPositions[i].set(np.x, 0, np.z)
+        foodMeshes[i].position.set(np.x, terrain.getHeight(np.x, np.z) + 0.9, np.z)
+        foodQuantities[i] = 100
+      }
+    }
 
     controls.update()
     renderer.render(scene, camera)

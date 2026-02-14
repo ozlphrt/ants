@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
-import { DragControls } from 'three/examples/jsm/controls/DragControls'
+import { DragControls } from 'three/addons/controls/DragControls.js'
 
 export class Obstacles {
     scene: THREE.Scene
@@ -42,7 +42,7 @@ export class Obstacles {
 
         this.dragControls = new DragControls(this.objects, camera, domElement)
 
-        this.dragControls.addEventListener('dragstart', (event) => {
+        this.dragControls.addEventListener('dragstart', (event: { object: THREE.Object3D }) => {
             orbitControls.enabled = false
             const mesh = event.object as THREE.Mesh
             const index = this.objects.indexOf(mesh)
@@ -52,7 +52,7 @@ export class Obstacles {
             }
         })
 
-        this.dragControls.addEventListener('drag', (event) => {
+        this.dragControls.addEventListener('drag', (event: { object: THREE.Object3D }) => {
             const mesh = event.object as THREE.Mesh
             const index = this.objects.indexOf(mesh)
 
@@ -98,7 +98,7 @@ export class Obstacles {
             }
         })
 
-        this.dragControls.addEventListener('dragend', (event) => {
+        this.dragControls.addEventListener('dragend', (event: { object: THREE.Object3D }) => {
             orbitControls.enabled = true
             const mesh = event.object as THREE.Mesh
             const index = this.objects.indexOf(mesh)
@@ -109,7 +109,7 @@ export class Obstacles {
         })
     }
 
-    addBox(x: number, y: number, z: number, w: number, h: number, d: number) {
+    addBox(x: number, _y: number, z: number, w: number, h: number, d: number) {
         // Use Icosahedron for all pebbles to ensure organic, non-boxy shapes
         const baseRadius = Math.max(w, d) / 2
         const geometry = new THREE.IcosahedronGeometry(baseRadius, 3)

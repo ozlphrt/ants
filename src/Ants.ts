@@ -3,175 +3,337 @@ import { Pheromones } from './Pheromones'
 import { Terrain } from './Terrain'
 import { Obstacles } from './Obstacles'
 
-export enum AntState {
-    EXPLORING,
-    RETURNING
-}
+export const AntState = { EXPLORING: 0, RETURNING: 1 } as const
+export type AntState = (typeof AntState)[keyof typeof AntState]
 
 export class Ants {
-    count: number
-    mesh: THREE.InstancedMesh
-    dummy = new THREE.Object3D()
+  count: number
+  mesh: THREE.InstancedMesh
+  dummy = new THREE.Object3D()
 
-    positions: Float32Array
-    velocities: Float32Array
-    states: Uint8Array
-    terrain: Terrain
-    pheromones: Pheromones
-    obstacles: Obstacles
-    foodPositions: THREE.Vector3[]
-    homePosition: THREE.Vector3
+  positions: Float32Array
+  velocities: Float32Array
+  momentum: Float32Array
+  states: Uint8Array
+  terrain: Terrain
+  pheromones: Pheromones
+  obstacles: Obstacles
+  foodPositions: THREE.Vector3[]
+  homePosition: THREE.Vector3
+  onFoodCollected?: (foodIndex: number) => void
+  foodQuantities?: number[]
 
-    constructor(count: number, terrain: Terrain, pheromones: Pheromones, obstacles: Obstacles, foodPositions: THREE.Vector3[], homePosition: THREE.Vector3) {
-        this.count = count
-        this.terrain = terrain
-        this.pheromones = pheromones
-        this.obstacles = obstacles
-        this.foodPositions = foodPositions
-        this.homePosition = homePosition
-        // ... rest of constructor ... (keep arrays and mesh init)
+  constructor(
+    count: number,
+    terrain: Terrain,
+    pheromones: Pheromones,
+    obstacles: Obstacles,
+    foodPositions: THREE.Vector3[],
+    homePosition: THREE.Vector3,
+    onFoodCollected?: (foodIndex: number) => void,
+    foodQuantities?: number[]
+  ) {
+    this.count = count
+    this.terrain = terrain
+    this.pheromones = pheromones
+    this.obstacles = obstacles
+    this.foodPositions = foodPositions
+    this.homePosition = homePosition
+    this.onFoodCollected = onFoodCollected
+    this.foodQuantities = foodQuantities
 
-        this.positions = new Float32Array(count * 3)
-        this.velocities = new Float32Array(count * 3)
-        this.states = new Uint8Array(count)
+    this.positions = new Float32Array(count * 3)
+    this.velocities = new Float32Array(count * 3)
+    this.momentum = new Float32Array(count * 2)
+    this.states = new Uint8Array(count)
 
-        const geometry = new THREE.ConeGeometry(0.1, 0.4, 4)
-        geometry.rotateX(Math.PI / 2) // Points forward along Z
+    const geometry = new THREE.ConeGeometry(0.1, 0.4, 4)
+    geometry.rotateX(Math.PI / 2)
+    const material = new THREE.MeshStandardMaterial({ color: 0xffffff })
+    this.mesh = new THREE.InstancedMesh(geometry, material, count)
+    this.mesh.castShadow = true
 
-        const material = new THREE.MeshStandardMaterial({ color: 0xffffff })
-        this.mesh = new THREE.InstancedMesh(geometry, material, count)
-        this.mesh.castShadow = true
+    for (let i = 0; i < count; i++) {
+      this.positions[i * 3 + 0] = this.homePosition.x + (Math.random() - 0.5) * 4
+      this.positions[i * 3 + 1] = 0
+      this.positions[i * 3 + 2] = this.homePosition.z + (Math.random() - 0.5) * 4
 
-        for (let i = 0; i < count; i++) {
-            this.positions[i * 3 + 0] = this.homePosition.x + (Math.random() - 0.5) * 4
-            this.positions[i * 3 + 1] = 0
-            this.positions[i * 3 + 2] = this.homePosition.z + (Math.random() - 0.5) * 4
+      const angleToNest = Math.atan2(
+        this.positions[i * 3 + 2] - this.homePosition.z,
+        this.positions[i * 3 + 0] - this.homePosition.x
+      )
+      const angle = angleToNest + (Math.random() - 0.5) * Math.PI
+      const initSpeed = 0.05
+      this.velocities[i * 3 + 0] = Math.cos(angle) * initSpeed
+      this.velocities[i * 3 + 1] = 0
+      this.velocities[i * 3 + 2] = Math.sin(angle) * initSpeed
 
-            const angle = Math.random() * Math.PI * 2
-            const slowInit = 0.04
-            this.velocities[i * 3 + 0] = Math.cos(angle) * slowInit
-            this.velocities[i * 3 + 1] = 0
-            this.velocities[i * 3 + 2] = Math.sin(angle) * slowInit
+      this.momentum[i * 2 + 0] = this.velocities[i * 3 + 0]
+      this.momentum[i * 2 + 1] = this.velocities[i * 3 + 2]
+      this.states[i] = AntState.EXPLORING
+    }
+  }
 
-            this.states[i] = AntState.EXPLORING
-        }
+  update(dt: number) {
+    const cfg = this.pheromones.config
+    const depositPositions = new Float32Array(this.count * 3)
+    const searchAmounts = new Float32Array(this.count)
+    const returnAmounts = new Float32Array(this.count)
+
+    const targetSpeedReturn = 0.042
+    const targetSpeedExplore = 0.05
+    const maxTurnRate = 0.3
+    const dtScale = Math.min(dt * 60, 2)
+    const halfSize = this.terrain.size / 2 - 2
+    const gridSize = 2
+    const foodVisualRange = 20
+    const nestCloseRange = 10
+
+    const grid = new Map<string, number[]>()
+    for (let i = 0; i < this.count; i++) {
+      const gx = Math.floor(this.positions[i * 3 + 0] / gridSize)
+      const gz = Math.floor(this.positions[i * 3 + 2] / gridSize)
+      const key = `${gx},${gz}`
+      if (!grid.has(key)) grid.set(key, [])
+      grid.get(key)!.push(i)
     }
 
-    update(dt: number) {
-        const depositPositions = new Float32Array(this.count * 3)
-        const depositColors = new Float32Array(this.count * 3)
-
-        for (let i = 0; i < this.count; i++) {
-            const i3 = i * 3
-            const state = this.states[i]
-
-            // 1. Boundaries
-            const halfSize = this.terrain.size / 2 - 2
-            if (Math.abs(this.positions[i3 + 0]) > halfSize) this.velocities[i3 + 0] *= -1
-            if (Math.abs(this.positions[i3 + 2]) > halfSize) this.velocities[i3 + 2] *= -1
-
-            // 2. State Logic (Home <-> Food)
-            const dxHome = this.positions[i3 + 0] - this.homePosition.x
-            const dzHome = this.positions[i3 + 2] - this.homePosition.z
-            const distSqToHome = dxHome * dxHome + dzHome * dzHome
-            if (state === AntState.RETURNING && distSqToHome < 9) {
-                this.states[i] = AntState.EXPLORING
-                this.velocities[i3 + 0] *= -1
-                this.velocities[i3 + 2] *= -1
-            }
-
-            if (state === AntState.EXPLORING) {
-                for (const fp of this.foodPositions) {
-                    const dx = this.positions[i3 + 0] - fp.x
-                    const dz = this.positions[i3 + 2] - fp.z
-                    if (dx * dx + dz * dz < 4) {
-                        this.states[i] = AntState.RETURNING
-                        this.velocities[i3 + 0] *= -1
-                        this.velocities[i3 + 2] *= -1
-                        break
-                    }
-                }
-            }
-
-            // 3. Movement
-            this.positions[i3 + 0] += this.velocities[i3 + 0]
-            this.positions[i3 + 2] += this.velocities[i3 + 2]
-
-            // 3.5 Obstacle Repulsion
-            for (let j = 0; j < this.obstacles.objects.length; j++) {
-                const rock = this.obstacles.objects[j]
-                const dx = this.positions[i3 + 0] - rock.position.x
-                const dz = this.positions[i3 + 2] - rock.position.z
-                const distSq = dx * dx + dz * dz
-
-                const { w, d } = this.obstacles.dims[j]
-                const radius = Math.max(w, d) / 1.5 // Sphere approximation
-                const radSq = radius * radius
-
-                if (distSq < radSq) {
-                    const dist = Math.sqrt(distSq)
-                    const push = (radius - dist) / dist
-                    this.positions[i3 + 0] += dx * push
-                    this.positions[i3 + 2] += dz * push
-
-                    // Bounce velocity
-                    const nx = dx / dist
-                    const nz = dz / dist
-                    const dot = this.velocities[i3 + 0] * nx + this.velocities[i3 + 2] * nz
-                    this.velocities[i3 + 0] -= 2 * dot * nx
-                    this.velocities[i3 + 2] -= 2 * dot * nz
-                }
-            }
-
-            // Terrain Height
-            const groundY = this.terrain.getHeight(this.positions[i3 + 0], this.positions[i3 + 2])
-            this.positions[i3 + 1] = groundY + 0.1
-
-            // 4. Deposit Pheromones
-            depositPositions[i3 + 0] = this.positions[i3 + 0]
-            depositPositions[i3 + 1] = this.positions[i3 + 1]
-            depositPositions[i3 + 2] = this.positions[i3 + 2]
-
-            if (state === AntState.EXPLORING) {
-                // Return-to-home trail: Use Blue channel
-                depositColors[i3 + 0] = 0.0
-                depositColors[i3 + 1] = 0.0
-                depositColors[i3 + 2] = 0.8
-            } else {
-                // Return-to-food trail: Use Red channel
-                depositColors[i3 + 0] = 0.8
-                depositColors[i3 + 1] = 0.0
-                depositColors[i3 + 2] = 0.0
-            }
-
-            // 5. Update Matrix & Orientation
-            this.dummy.position.set(this.positions[i3 + 0], this.positions[i3 + 1] + 0.05, this.positions[i3 + 2])
-
-            // Tilt based on normal
-            const normal = this.terrain.getNormal(this.positions[i3 + 0], this.positions[i3 + 2])
-            this.dummy.up.copy(normal)
-
-            this.dummy.lookAt(
-                this.positions[i3 + 0] + this.velocities[i3 + 0],
-                this.positions[i3 + 1] + 0.05,
-                this.positions[i3 + 2] + this.velocities[i3 + 2]
-            )
-            this.dummy.updateMatrix()
-            this.mesh.setMatrixAt(i, this.dummy.matrix)
-
-            // Random wander
-            const wander = 0.03
-            this.velocities[i3 + 0] += (Math.random() - 0.5) * wander
-            this.velocities[i3 + 2] += (Math.random() - 0.5) * wander
-
-            // Normalize speed (slower)
-            const speed = 0.04
-            const mag = Math.sqrt(this.velocities[i3 + 0] ** 2 + this.velocities[i3 + 2] ** 2)
-            this.velocities[i3 + 0] = (this.velocities[i3 + 0] / mag) * speed
-            this.velocities[i3 + 2] = (this.velocities[i3 + 2] / mag) * speed
-        }
-
-        this.pheromones.deposit(depositPositions, depositColors, this.count)
-        this.mesh.instanceMatrix.needsUpdate = true
+    const rand = () => {
+      const a = Math.random() * Math.PI * 2
+      return new THREE.Vector2(Math.cos(a), Math.sin(a))
     }
+
+    for (let i = 0; i < this.count; i++) {
+      const i3 = i * 3
+      const i2 = i * 2
+      const state = this.states[i]
+      const px = this.positions[i3 + 0]
+      const pz = this.positions[i3 + 2]
+      let dirX = 0
+      let dirZ = 0
+
+      // 1. Boundaries
+      if (Math.abs(px) > halfSize) this.velocities[i3 + 0] *= -1
+      if (Math.abs(pz) > halfSize) this.velocities[i3 + 2] *= -1
+
+      // 2. State transitions
+      const distToHome = Math.hypot(px - this.homePosition.x, pz - this.homePosition.z)
+      if (state === AntState.RETURNING && distToHome < 3) {
+        this.states[i] = AntState.EXPLORING
+      }
+      if (state === AntState.EXPLORING) {
+        for (let fi = 0; fi < this.foodPositions.length; fi++) {
+          if (this.foodQuantities && this.foodQuantities[fi] <= 0) continue
+          const fp = this.foodPositions[fi]
+          const d = Math.hypot(px - fp.x, pz - fp.z)
+          if (d < 2) {
+            this.states[i] = AntState.RETURNING
+            this.onFoodCollected?.(fi)
+            break
+          }
+        }
+      }
+
+      // 3. Desired direction (vibeants: antennae + direct + random)
+      const vx = this.velocities[i3 + 0]
+      const vz = this.velocities[i3 + 2]
+
+      if (state === AntState.RETURNING) {
+        const directToNestX = (this.homePosition.x - px) / (distToHome || 0.001)
+        const directToNestZ = (this.homePosition.z - pz) / (distToHome || 0.001)
+        if (distToHome < nestCloseRange) {
+          const bias = Math.min(0.8, (nestCloseRange - distToHome) / nestCloseRange)
+          const r = rand()
+          dirX = directToNestX * bias + r.x * (1 - bias)
+          dirZ = directToNestZ * bias + r.y * (1 - bias)
+        } else {
+          const info = this.pheromones.getAntennaePheromoneDirection(px, pz, 'home', vx, vz)
+          if (info && info.strength > cfg.minTrailStrength) {
+            const att = Math.min(2, info.strength)
+            dirX = info.gx * att + directToNestX * 0.5
+            dirZ = info.gz * att + directToNestZ * 0.5
+          } else {
+            dirX = directToNestX * 0.7 + rand().x * 0.3
+            dirZ = directToNestZ * 0.7 + rand().y * 0.3
+          }
+        }
+        this.momentum[i2] *= 0.3
+        this.momentum[i2 + 1] *= 0.3
+      } else {
+        let nearestFood: THREE.Vector3 | null = null
+        let nearestDist = Infinity
+        for (let fi = 0; fi < this.foodPositions.length; fi++) {
+          if (this.foodQuantities && this.foodQuantities[fi] <= 0) continue
+          const fp = this.foodPositions[fi]
+          const d = Math.hypot(px - fp.x, pz - fp.z)
+          if (d < foodVisualRange && d < nearestDist) {
+            nearestDist = d
+            nearestFood = fp
+          }
+        }
+        if (nearestFood) {
+          const directX = (nearestFood.x - px) / nearestDist
+          const directZ = (nearestFood.z - pz) / nearestDist
+          const bias = Math.min(0.8, (foodVisualRange - nearestDist) / foodVisualRange)
+          const r = rand()
+          dirX = directX * bias + r.x * (1 - bias)
+          dirZ = directZ * bias + r.y * (1 - bias)
+          if (nearestDist < 5) {
+            dirX *= 1.2
+            dirZ *= 1.2
+          }
+        } else {
+          const info = this.pheromones.getAntennaePheromoneDirection(px, pz, 'food', vx, vz)
+          if (info && info.strength > cfg.minTrailStrength) {
+            const att = Math.min(3, info.strength)
+            dirX = info.gx * att + rand().x * 0.3
+            dirZ = info.gz * att + rand().y * 0.3
+          } else {
+            const r = rand()
+            dirX = r.x + this.momentum[i2] * 0.4
+            dirZ = r.y + this.momentum[i2 + 1] * 0.4
+          }
+        }
+      }
+
+      // Obstacle avoidance — only steer when very close (ants can approach closely)
+      for (let j = 0; j < this.obstacles.objects.length; j++) {
+        const rock = this.obstacles.objects[j]
+        const w = this.obstacles.dims[j].w
+        const d = this.obstacles.dims[j].d
+        const rad = Math.sqrt(w * w + d * d) / 2 + 0.08 // Box footprint + ant clearance
+        const dx = px - rock.position.x
+        const dz = pz - rock.position.z
+        const dist = Math.hypot(dx, dz)
+        if (dist < rad + 0.25 && dist > 0.001) {
+          const avoid = Math.max(0.3, 1.5 / (dist - rad + 0.05))
+          dirX += (dx / dist) * avoid * 0.6
+          dirZ += (dz / dist) * avoid * 0.6
+        }
+      }
+
+      const dm = Math.hypot(dirX, dirZ) || 0.001
+      dirX /= dm
+      dirZ /= dm
+
+      // Momentum blend (vibeants)
+      const momStr = state === AntState.RETURNING ? 0.4 : 0.5
+      this.momentum[i2] = this.momentum[i2] * 0.7 + dirX * 0.3
+      this.momentum[i2 + 1] = this.momentum[i2 + 1] * 0.7 + dirZ * 0.3
+      const momMag = Math.hypot(this.momentum[i2], this.momentum[i2 + 1]) || 0.001
+      dirX = dirX * (1 - momStr) + (this.momentum[i2] / momMag) * momStr
+      dirZ = dirZ * (1 - momStr) + (this.momentum[i2 + 1] / momMag) * momStr
+      const dm2 = Math.hypot(dirX, dirZ) || 0.001
+      dirX /= dm2
+      dirZ /= dm2
+
+      // Turn rate limit
+      const currAngle = Math.atan2(vz, vx)
+      const targetAngle = Math.atan2(dirZ, dirX)
+      let angleDiff = targetAngle - currAngle
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2
+      const capped = Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), maxTurnRate)
+      const newAngle = currAngle + capped
+      const spd = state === AntState.RETURNING ? targetSpeedReturn : targetSpeedExplore
+      this.velocities[i3 + 0] = Math.cos(newAngle) * spd
+      this.velocities[i3 + 2] = Math.sin(newAngle) * spd
+
+      // 4. Ant–ant repulsion (explorers yield to returners)
+      const gx = Math.floor(px / gridSize)
+      const gz = Math.floor(pz / gridSize)
+      for (let ox = -1; ox <= 1; ox++) {
+        for (let oz = -1; oz <= 1; oz++) {
+          const neighbors = grid.get(`${gx + ox},${gz + oz}`)
+          if (!neighbors) continue
+          for (const j of neighbors) {
+            if (j === i) continue
+            const j3 = j * 3
+            const dx = px - this.positions[j3 + 0]
+            const dz = pz - this.positions[j3 + 2]
+            const distSq = dx * dx + dz * dz
+            if (distSq < 1.2 * 1.2 && distSq > 0.0001) {
+              const dist = Math.sqrt(distSq)
+              let f = (1.2 - dist) / dist * 0.15
+              if (state === AntState.EXPLORING && this.states[j] === AntState.RETURNING) f *= 2.5
+              else if (state === AntState.RETURNING && this.states[j] === AntState.EXPLORING) f *= 0.4
+              this.velocities[i3 + 0] += (dx / dist) * f
+              this.velocities[i3 + 2] += (dz / dist) * f
+            }
+          }
+        }
+      }
+      const vm = Math.hypot(this.velocities[i3 + 0], this.velocities[i3 + 2]) || 0.001
+      this.velocities[i3 + 0] = (this.velocities[i3 + 0] / vm) * spd
+      this.velocities[i3 + 2] = (this.velocities[i3 + 2] / vm) * spd
+
+      // 5. Move
+      this.positions[i3 + 0] += this.velocities[i3 + 0] * dtScale
+      this.positions[i3 + 2] += this.velocities[i3 + 2] * dtScale
+
+      // 6. Obstacles — push out if overlapping; never allow overlap or go under
+      for (let j = 0; j < this.obstacles.objects.length; j++) {
+        const rock = this.obstacles.objects[j]
+        const w = this.obstacles.dims[j].w
+        const d = this.obstacles.dims[j].d
+        const rad = Math.sqrt(w * w + d * d) / 2 + 0.08 // Box footprint + ant clearance
+        const dx = this.positions[i3 + 0] - rock.position.x
+        const dz = this.positions[i3 + 2] - rock.position.z
+        const distSq = dx * dx + dz * dz
+        if (distSq < rad * rad) {
+          const dist = Math.sqrt(distSq) || 0.001
+          const push = (rad - dist) / dist
+          this.positions[i3 + 0] += dx * push
+          this.positions[i3 + 2] += dz * push
+          const nx = dx / dist
+          const nz = dz / dist
+          const dot = this.velocities[i3 + 0] * nx + this.velocities[i3 + 2] * nz
+          if (dot > 0) {
+            this.velocities[i3 + 0] -= dot * nx
+            this.velocities[i3 + 2] -= dot * nz
+            const vm2 = Math.hypot(this.velocities[i3 + 0], this.velocities[i3 + 2]) || 0.001
+            this.velocities[i3 + 0] = (this.velocities[i3 + 0] / vm2) * spd
+            this.velocities[i3 + 2] = (this.velocities[i3 + 2] / vm2) * spd
+          }
+        }
+      }
+
+      this.positions[i3 + 1] = this.terrain.getHeight(this.positions[i3 + 0], this.positions[i3 + 2]) + 0.1
+
+      // 7. Never go under obstacles — clamp Y when near obstacle footprint
+      for (let j = 0; j < this.obstacles.objects.length; j++) {
+        const rock = this.obstacles.objects[j]
+        const w = this.obstacles.dims[j].w
+        const d = this.obstacles.dims[j].d
+        const rad = Math.sqrt(w * w + d * d) / 2
+        const dx = this.positions[i3 + 0] - rock.position.x
+        const dz = this.positions[i3 + 2] - rock.position.z
+        if (dx * dx + dz * dz < rad * rad) {
+          const obstacleBottom = rock.position.y - this.obstacles.halfHeights[j]
+          this.positions[i3 + 1] = Math.max(this.positions[i3 + 1], obstacleBottom + 0.12)
+        }
+      }
+
+      // 8. Deposit
+      depositPositions[i3 + 0] = this.positions[i3 + 0]
+      depositPositions[i3 + 1] = this.positions[i3 + 1]
+      depositPositions[i3 + 2] = this.positions[i3 + 2]
+      searchAmounts[i] = state === AntState.EXPLORING ? 1 : 0
+      returnAmounts[i] = state === AntState.RETURNING ? 1 : 0
+
+      // 9. Orientation
+      this.dummy.position.set(this.positions[i3 + 0], this.positions[i3 + 1] + 0.05, this.positions[i3 + 2])
+      this.dummy.up.copy(this.terrain.getNormal(this.positions[i3 + 0], this.positions[i3 + 2]))
+      this.dummy.lookAt(
+        this.positions[i3 + 0] + this.velocities[i3 + 0],
+        this.positions[i3 + 1] + 0.05,
+        this.positions[i3 + 2] + this.velocities[i3 + 2]
+      )
+      this.dummy.updateMatrix()
+      this.mesh.setMatrixAt(i, this.dummy.matrix)
+    }
+
+    this.pheromones.deposit(depositPositions, searchAmounts, returnAmounts, this.count)
+    this.mesh.instanceMatrix.needsUpdate = true
+  }
 }
