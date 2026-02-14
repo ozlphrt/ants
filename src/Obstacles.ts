@@ -13,21 +13,30 @@ export class Obstacles {
 
     terrain: any
 
-    constructor(scene: THREE.Scene, camera: THREE.Camera, domElement: HTMLElement, world: RAPIER.World, orbitControls: any, terrain: any) {
+    constructor(scene: THREE.Scene, camera: THREE.Camera, domElement: HTMLElement, world: RAPIER.World, orbitControls: any, terrain: any, entities?: { pos: THREE.Vector3; rad: number }[]) {
         this.scene = scene
         this.world = world
         this.terrain = terrain
+        const entityList = entities ?? []
 
-        // Create 15 obstacles at random locations
+        function findSafeObstaclePos(radius: number): { x: number; z: number } {
+            for (let i = 0; i < 150; i++) {
+                const x = (Math.random() - 0.5) * 80
+                const z = (Math.random() - 0.5) * 80
+                if (!entityList.some(e => Math.hypot(x - e.pos.x, z - e.pos.z) < radius + e.rad + 3)) {
+                    entityList.push({ pos: new THREE.Vector3(x, 0, z), rad: radius })
+                    return { x, z }
+                }
+            }
+            return { x: (Math.random() - 0.5) * 70, z: (Math.random() - 0.5) * 70 }
+        }
+
         for (let i = 0; i < 15; i++) {
-            const x = (Math.random() - 0.5) * 80
-            const z = (Math.random() - 0.5) * 80
-
-            // Randomize dimensions - much flatter for a pebbly look
             const w = 2 + Math.random() * 6
-            const h = 0.5 + Math.random() * 1.0 // Height range 0.5 - 1.5
+            const h = 0.5 + Math.random() * 1.0
             const d = 2 + Math.random() * 6
-
+            const radius = Math.max(w, d) / 2 + 2
+            const { x, z } = findSafeObstaclePos(radius)
             this.addBox(x, 2, z, w, h, d)
         }
 

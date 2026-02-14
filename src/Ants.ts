@@ -1,5 +1,4 @@
 import * as THREE from 'three'
-import RAPIER from '@dimforge/rapier3d-compat'
 import { Pheromones } from './Pheromones'
 import { Terrain } from './Terrain'
 import { Obstacles } from './Obstacles'
@@ -14,21 +13,22 @@ export class Ants {
     mesh: THREE.InstancedMesh
     dummy = new THREE.Object3D()
 
-    // Data arrays
     positions: Float32Array
     velocities: Float32Array
     states: Uint8Array
-
-    // Raycaster for ground alignment
     terrain: Terrain
     pheromones: Pheromones
     obstacles: Obstacles
+    foodPositions: THREE.Vector3[]
+    homePosition: THREE.Vector3
 
-    constructor(count: number, terrain: Terrain, pheromones: Pheromones, obstacles: Obstacles) {
+    constructor(count: number, terrain: Terrain, pheromones: Pheromones, obstacles: Obstacles, foodPositions: THREE.Vector3[], homePosition: THREE.Vector3) {
         this.count = count
         this.terrain = terrain
         this.pheromones = pheromones
         this.obstacles = obstacles
+        this.foodPositions = foodPositions
+        this.homePosition = homePosition
         // ... rest of constructor ... (keep arrays and mesh init)
 
         this.positions = new Float32Array(count * 3)
@@ -42,16 +42,16 @@ export class Ants {
         this.mesh = new THREE.InstancedMesh(geometry, material, count)
         this.mesh.castShadow = true
 
-        // Initialize ants at center
         for (let i = 0; i < count; i++) {
-            this.positions[i * 3 + 0] = (Math.random() - 0.5) * 5
+            this.positions[i * 3 + 0] = this.homePosition.x + (Math.random() - 0.5) * 4
             this.positions[i * 3 + 1] = 0
-            this.positions[i * 3 + 2] = (Math.random() - 0.5) * 5
+            this.positions[i * 3 + 2] = this.homePosition.z + (Math.random() - 0.5) * 4
 
             const angle = Math.random() * Math.PI * 2
-            this.velocities[i * 3 + 0] = Math.cos(angle) * 0.1
+            const slowInit = 0.04
+            this.velocities[i * 3 + 0] = Math.cos(angle) * slowInit
             this.velocities[i * 3 + 1] = 0
-            this.velocities[i * 3 + 2] = Math.sin(angle) * 0.1
+            this.velocities[i * 3 + 2] = Math.sin(angle) * slowInit
 
             this.states[i] = AntState.EXPLORING
         }
@@ -71,18 +71,26 @@ export class Ants {
             if (Math.abs(this.positions[i3 + 2]) > halfSize) this.velocities[i3 + 2] *= -1
 
             // 2. State Logic (Home <-> Food)
-            const distSqToCenter = this.positions[i3 + 0] ** 2 + this.positions[i3 + 2] ** 2
-            if (state === AntState.RETURNING && distSqToCenter < 25) {
+            const dxHome = this.positions[i3 + 0] - this.homePosition.x
+            const dzHome = this.positions[i3 + 2] - this.homePosition.z
+            const distSqToHome = dxHome * dxHome + dzHome * dzHome
+            if (state === AntState.RETURNING && distSqToHome < 9) {
                 this.states[i] = AntState.EXPLORING
                 this.velocities[i3 + 0] *= -1
                 this.velocities[i3 + 2] *= -1
             }
 
-            const distSqToFood = (this.positions[i3 + 0] - 30) ** 2 + (this.positions[i3 + 2] - 35) ** 2
-            if (state === AntState.EXPLORING && distSqToFood < 25) {
-                this.states[i] = AntState.RETURNING
-                this.velocities[i3 + 0] *= -1
-                this.velocities[i3 + 2] *= -1
+            if (state === AntState.EXPLORING) {
+                for (const fp of this.foodPositions) {
+                    const dx = this.positions[i3 + 0] - fp.x
+                    const dz = this.positions[i3 + 2] - fp.z
+                    if (dx * dx + dz * dz < 4) {
+                        this.states[i] = AntState.RETURNING
+                        this.velocities[i3 + 0] *= -1
+                        this.velocities[i3 + 2] *= -1
+                        break
+                    }
+                }
             }
 
             // 3. Movement
@@ -152,12 +160,12 @@ export class Ants {
             this.mesh.setMatrixAt(i, this.dummy.matrix)
 
             // Random wander
-            const wander = 0.05
+            const wander = 0.03
             this.velocities[i3 + 0] += (Math.random() - 0.5) * wander
             this.velocities[i3 + 2] += (Math.random() - 0.5) * wander
 
-            // Normalize speed
-            const speed = 0.08
+            // Normalize speed (slower)
+            const speed = 0.04
             const mag = Math.sqrt(this.velocities[i3 + 0] ** 2 + this.velocities[i3 + 2] ** 2)
             this.velocities[i3 + 0] = (this.velocities[i3 + 0] / mag) * speed
             this.velocities[i3 + 2] = (this.velocities[i3 + 2] / mag) * speed

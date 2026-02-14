@@ -48,12 +48,11 @@ async function init() {
   scene.add(directionalLight)
 
   // Secondary point lights for better visibility in valleys
-  const homeLight = new THREE.PointLight(0x0088ff, 50, 40)
-  homeLight.position.set(0, 10, 0)
+  const homeLight = new THREE.PointLight(0x0088ff, 40, 35)
   scene.add(homeLight)
 
-  const foodLight = new THREE.PointLight(0xffaa00, 100, 60)
-  foodLight.position.set(30, 15, 35)
+  const foodLight = new THREE.PointLight(0xffaa00, 80, 50)
+  foodLight.position.set(0, 15, 0)
   scene.add(foodLight)
 
   // System Setup
@@ -104,27 +103,51 @@ async function init() {
   scene.add(terrain.mesh)
   terrain.createPhysicsCollider(world)
 
-  // Obstacles
-  const obstacles = new Obstacles(scene, camera, renderer.domElement, world, controls, terrain)
+  // Overlap-free placement: home, foods, obstacles must not overlap
+  const entities: { pos: THREE.Vector3; rad: number }[] = []
+  function findSafePosition(radius: number): THREE.Vector3 {
+    for (let i = 0; i < 200; i++) {
+      const pos = new THREE.Vector3((Math.random() - 0.5) * 85, 0, (Math.random() - 0.5) * 85)
+      if (!entities.some(e => new THREE.Vector2(pos.x, pos.z).distanceTo(new THREE.Vector2(e.pos.x, e.pos.z)) < radius + e.rad + 3)) {
+        entities.push({ pos, rad: radius })
+        return pos
+      }
+    }
+    return new THREE.Vector3((Math.random() - 0.5) * 80, 0, (Math.random() - 0.5) * 80)
+  }
 
-  // Markers for Home and Food
+  // 1. Home (smaller)
+  const homePos = findSafePosition(2)
   const homeMarker = new THREE.Mesh(
-    new THREE.TorusGeometry(3, 0.5, 16, 32),
+    new THREE.TorusGeometry(1.2, 0.35, 16, 32),
     new THREE.MeshStandardMaterial({ color: 0x0088ff, emissive: 0x0044ff })
   )
   homeMarker.rotation.x = Math.PI / 2
-  homeMarker.position.y = terrain.getHeight(0, 0) + 0.1
+  homeMarker.position.set(homePos.x, terrain.getHeight(homePos.x, homePos.z) + 0.1, homePos.z)
   scene.add(homeMarker)
+  homeLight.position.set(homePos.x, 10, homePos.z)
 
-  const foodMarker = new THREE.Mesh(
-    new THREE.SphereGeometry(3, 32, 32),
-    new THREE.MeshStandardMaterial({ color: 0xffaa00, emissive: 0xff5500 })
-  )
-  foodMarker.position.set(30, terrain.getHeight(30, 35) + 3, 35)
-  scene.add(foodMarker)
+  // 2. Foods (5, smaller, orange)
+  const foodPositions: THREE.Vector3[] = []
+  const foodMeshes: THREE.Mesh[] = []
+  const foodMat = new THREE.MeshStandardMaterial({ color: 0xff8800, emissive: 0xff4400 })
+  for (let j = 0; j < 5; j++) {
+    const fp = findSafePosition(1.8)
+    foodPositions.push(fp)
+    const foodMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.9, 16, 16),
+      foodMat
+    )
+    foodMesh.position.set(fp.x, terrain.getHeight(fp.x, fp.z) + 0.9, fp.z)
+    scene.add(foodMesh)
+    foodMeshes.push(foodMesh)
+  }
 
-  // Ants
-  const ants = new Ants(100, terrain, pheromones, obstacles)
+  // 3. Obstacles (consume entities list for placement)
+  const obstacles = new Obstacles(scene, camera, renderer.domElement, world, controls, terrain, entities)
+
+  // Ants (500, slower)
+  const ants = new Ants(500, terrain, pheromones, obstacles, foodPositions, homePos)
   scene.add(ants.mesh)
 
   // Clock
@@ -135,7 +158,7 @@ async function init() {
   guiDiv.id = 'gui'
   guiDiv.innerHTML = `
     <h1>Ant Colony 3D</h1>
-    <div class="stat">Ants: 100</div>
+    <div class="stat">Ants: 500</div>
     <div id="status" class="stat">Status: Simulating...</div>
   `
   document.body.appendChild(guiDiv)
