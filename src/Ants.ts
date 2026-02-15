@@ -82,12 +82,13 @@ export class Ants {
 
     const targetSpeedReturn = 0.042
     const targetSpeedExplore = 0.05
-    const maxTurnRate = 0.3
+    const maxTurnReturn = 0.3
+    const maxTurnExplore = 0.4
     const dtScale = Math.min(dt * 60, 2)
     const halfSize = this.terrain.size / 2 - 2
     const gridSize = 2
-    const foodVisualRange = 20
-    const nestCloseRange = 10
+    const foodVisualRange = 33
+    const nestCloseRange = 17
 
     const grid = new Map<string, number[]>()
     for (let i = 0; i < this.count; i++) {
@@ -118,7 +119,7 @@ export class Ants {
 
       // 2. State transitions
       const distToHome = Math.hypot(px - this.homePosition.x, pz - this.homePosition.z)
-      if (state === AntState.RETURNING && distToHome < 3) {
+      if (state === AntState.RETURNING && distToHome < 0.4) {
         this.states[i] = AntState.EXPLORING
       }
       if (state === AntState.EXPLORING) {
@@ -126,7 +127,7 @@ export class Ants {
           if (this.foodQuantities && this.foodQuantities[fi] <= 0) continue
           const fp = this.foodPositions[fi]
           const d = Math.hypot(px - fp.x, pz - fp.z)
-          if (d < 2) {
+          if (d < 0.4) {
             this.states[i] = AntState.RETURNING
             this.onFoodCollected?.(fi)
             break
@@ -142,19 +143,20 @@ export class Ants {
         const directToNestX = (this.homePosition.x - px) / (distToHome || 0.001)
         const directToNestZ = (this.homePosition.z - pz) / (distToHome || 0.001)
         if (distToHome < nestCloseRange) {
-          const bias = Math.min(0.8, (nestCloseRange - distToHome) / nestCloseRange)
+          const directBias = Math.min(0.8, (nestCloseRange - distToHome) / nestCloseRange)
           const r = rand()
-          dirX = directToNestX * bias + r.x * (1 - bias)
-          dirZ = directToNestZ * bias + r.y * (1 - bias)
+          dirX = directToNestX * directBias + r.x * (1 - directBias)
+          dirZ = directToNestZ * directBias + r.y * (1 - directBias)
         } else {
-          const info = this.pheromones.getAntennaePheromoneDirection(px, pz, 'home', vx, vz)
-          if (info && info.strength > cfg.minTrailStrength) {
-            const att = Math.min(2, info.strength)
-            dirX = info.gx * att + directToNestX * 0.5
-            dirZ = info.gz * att + directToNestZ * 0.5
+          const antennae = this.pheromones.getAntennaePheromoneDirection(px, pz, 'home', vx, vz)
+          if (antennae && antennae.strength > 0.5) {
+            const att = Math.min(2, antennae.strength)
+            dirX = antennae.gx * att + directToNestX * 0.5
+            dirZ = antennae.gz * att + directToNestZ * 0.5
           } else {
-            dirX = directToNestX * 0.7 + rand().x * 0.3
-            dirZ = directToNestZ * 0.7 + rand().y * 0.3
+            const r = rand()
+            dirX = directToNestX * 0.7 + r.x * 0.3
+            dirZ = directToNestZ * 0.7 + r.y * 0.3
           }
         }
         this.momentum[i2] *= 0.3
@@ -174,20 +176,21 @@ export class Ants {
         if (nearestFood) {
           const directX = (nearestFood.x - px) / nearestDist
           const directZ = (nearestFood.z - pz) / nearestDist
-          const bias = Math.min(0.8, (foodVisualRange - nearestDist) / foodVisualRange)
+          const directBias = Math.min(0.8, (foodVisualRange - nearestDist) / foodVisualRange)
           const r = rand()
-          dirX = directX * bias + r.x * (1 - bias)
-          dirZ = directZ * bias + r.y * (1 - bias)
+          dirX = directX * directBias + r.x * (1 - directBias)
+          dirZ = directZ * directBias + r.y * (1 - directBias)
           if (nearestDist < 5) {
             dirX *= 1.2
             dirZ *= 1.2
           }
         } else {
-          const info = this.pheromones.getAntennaePheromoneDirection(px, pz, 'food', vx, vz)
-          if (info && info.strength > cfg.minTrailStrength) {
-            const att = Math.min(3, info.strength)
-            dirX = info.gx * att + rand().x * 0.3
-            dirZ = info.gz * att + rand().y * 0.3
+          const antennae = this.pheromones.getAntennaePheromoneDirection(px, pz, 'food', vx, vz)
+          if (antennae && antennae.strength > 0.5) {
+            const att = Math.min(3, antennae.strength)
+            const r = rand()
+            dirX = antennae.gx * att + r.x * 0.3
+            dirZ = antennae.gz * att + r.y * 0.3
           } else {
             const r = rand()
             dirX = r.x + this.momentum[i2] * 0.4
@@ -233,15 +236,17 @@ export class Ants {
       let angleDiff = targetAngle - currAngle
       while (angleDiff > Math.PI) angleDiff -= Math.PI * 2
       while (angleDiff < -Math.PI) angleDiff += Math.PI * 2
-      const capped = Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), maxTurnRate)
+      const maxTurn = state === AntState.RETURNING ? maxTurnReturn : maxTurnExplore
+      const capped = Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), maxTurn)
       const newAngle = currAngle + capped
       const spd = state === AntState.RETURNING ? targetSpeedReturn : targetSpeedExplore
       this.velocities[i3 + 0] = Math.cos(newAngle) * spd
       this.velocities[i3 + 2] = Math.sin(newAngle) * spd
 
-      // 4. Ant–ant repulsion (explorers yield to returners)
+      // 4. Ant–ant repulsion — small radius so they can get close (explorers yield to returners)
       const gx = Math.floor(px / gridSize)
       const gz = Math.floor(pz / gridSize)
+      const avoidRad = 0.35
       for (let ox = -1; ox <= 1; ox++) {
         for (let oz = -1; oz <= 1; oz++) {
           const neighbors = grid.get(`${gx + ox},${gz + oz}`)
@@ -252,11 +257,11 @@ export class Ants {
             const dx = px - this.positions[j3 + 0]
             const dz = pz - this.positions[j3 + 2]
             const distSq = dx * dx + dz * dz
-            if (distSq < 1.2 * 1.2 && distSq > 0.0001) {
+            if (distSq < avoidRad * avoidRad && distSq > 0.0001) {
               const dist = Math.sqrt(distSq)
-              let f = (1.2 - dist) / dist * 0.15
-              if (state === AntState.EXPLORING && this.states[j] === AntState.RETURNING) f *= 2.5
-              else if (state === AntState.RETURNING && this.states[j] === AntState.EXPLORING) f *= 0.4
+              let f = (avoidRad - dist) / dist * 0.08
+              if (state === AntState.EXPLORING && this.states[j] === AntState.RETURNING) f *= 2
+              else if (state === AntState.RETURNING && this.states[j] === AntState.EXPLORING) f *= 0.5
               this.velocities[i3 + 0] += (dx / dist) * f
               this.velocities[i3 + 2] += (dz / dist) * f
             }
@@ -271,36 +276,38 @@ export class Ants {
       this.positions[i3 + 0] += this.velocities[i3 + 0] * dtScale
       this.positions[i3 + 2] += this.velocities[i3 + 2] * dtScale
 
-      // 6. Obstacles — push out if overlapping; never allow overlap or go under
-      for (let j = 0; j < this.obstacles.objects.length; j++) {
-        const rock = this.obstacles.objects[j]
-        const w = this.obstacles.dims[j].w
-        const d = this.obstacles.dims[j].d
-        const rad = Math.sqrt(w * w + d * d) / 2 + 0.08 // Box footprint + ant clearance
-        const dx = this.positions[i3 + 0] - rock.position.x
-        const dz = this.positions[i3 + 2] - rock.position.z
-        const distSq = dx * dx + dz * dz
-        if (distSq < rad * rad) {
-          const dist = Math.sqrt(distSq) || 0.001
-          const push = (rad - dist) / dist
-          this.positions[i3 + 0] += dx * push
-          this.positions[i3 + 2] += dz * push
-          const nx = dx / dist
-          const nz = dz / dist
-          const dot = this.velocities[i3 + 0] * nx + this.velocities[i3 + 2] * nz
-          if (dot > 0) {
-            this.velocities[i3 + 0] -= dot * nx
-            this.velocities[i3 + 2] -= dot * nz
+      // 6. Obstacles — collide, bounce, push out; never overlap (iterate to resolve)
+      for (let iter = 0; iter < 3; iter++) {
+        let anyOverlap = false
+        for (let j = 0; j < this.obstacles.objects.length; j++) {
+          const rock = this.obstacles.objects[j]
+          const w = this.obstacles.dims[j].w
+          const d = this.obstacles.dims[j].d
+          const rad = Math.sqrt(w * w + d * d) / 2 + 0.05 // Box footprint + ant clearance
+          const dx = this.positions[i3 + 0] - rock.position.x
+          const dz = this.positions[i3 + 2] - rock.position.z
+          const distSq = dx * dx + dz * dz
+          if (distSq < rad * rad) {
+            anyOverlap = true
+            const dist = Math.sqrt(distSq) || 0.001
+            const nx = dx / dist
+            const nz = dz / dist
+            this.positions[i3 + 0] = rock.position.x + nx * rad
+            this.positions[i3 + 2] = rock.position.z + nz * rad
+            const dot = this.velocities[i3 + 0] * nx + this.velocities[i3 + 2] * nz
+            if (dot > 0) {
+              this.velocities[i3 + 0] -= 2 * dot * nx
+              this.velocities[i3 + 2] -= 2 * dot * nz
+            }
             const vm2 = Math.hypot(this.velocities[i3 + 0], this.velocities[i3 + 2]) || 0.001
             this.velocities[i3 + 0] = (this.velocities[i3 + 0] / vm2) * spd
             this.velocities[i3 + 2] = (this.velocities[i3 + 2] / vm2) * spd
           }
         }
+        if (!anyOverlap) break
       }
 
       this.positions[i3 + 1] = this.terrain.getHeight(this.positions[i3 + 0], this.positions[i3 + 2]) + 0.1
-
-      // 7. Never go under obstacles — clamp Y when near obstacle footprint
       for (let j = 0; j < this.obstacles.objects.length; j++) {
         const rock = this.obstacles.objects[j]
         const w = this.obstacles.dims[j].w
@@ -314,14 +321,96 @@ export class Ants {
         }
       }
 
-      // 8. Deposit
+      // 7. Deposit
       depositPositions[i3 + 0] = this.positions[i3 + 0]
       depositPositions[i3 + 1] = this.positions[i3 + 1]
       depositPositions[i3 + 2] = this.positions[i3 + 2]
       searchAmounts[i] = state === AntState.EXPLORING ? 1 : 0
       returnAmounts[i] = state === AntState.RETURNING ? 1 : 0
+    }
 
-      // 9. Orientation
+    // Ant–ant collision — push apart and bounce when overlapping (iterative resolve)
+    const antMinDist = 0.22
+    const antGridSize = 1
+    for (let iter = 0; iter < 3; iter++) {
+      const collGrid = new Map<string, number[]>()
+      for (let i = 0; i < this.count; i++) {
+        const gx = Math.floor(this.positions[i * 3 + 0] / antGridSize)
+        const gz = Math.floor(this.positions[i * 3 + 2] / antGridSize)
+        const key = `${gx},${gz}`
+        if (!collGrid.has(key)) collGrid.set(key, [])
+        collGrid.get(key)!.push(i)
+      }
+      let anyCollision = false
+      for (let i = 0; i < this.count; i++) {
+        const i3 = i * 3
+        const gx = Math.floor(this.positions[i3 + 0] / antGridSize)
+        const gz = Math.floor(this.positions[i3 + 2] / antGridSize)
+        for (let ox = -1; ox <= 1; ox++) {
+          for (let oz = -1; oz <= 1; oz++) {
+            const neighbors = collGrid.get(`${gx + ox},${gz + oz}`)
+            if (!neighbors) continue
+            for (const j of neighbors) {
+              if (j <= i) continue
+              const j3 = j * 3
+              const dx = this.positions[i3 + 0] - this.positions[j3 + 0]
+              const dz = this.positions[i3 + 2] - this.positions[j3 + 2]
+              const distSq = dx * dx + dz * dz
+              if (distSq < antMinDist * antMinDist && distSq > 0.0001) {
+                anyCollision = true
+                const dist = Math.sqrt(distSq) || 0.001
+                const nx = dx / dist
+                const nz = dz / dist
+                const overlap = antMinDist - dist
+                this.positions[i3 + 0] += nx * (overlap / 2)
+                this.positions[i3 + 2] += nz * (overlap / 2)
+                this.positions[j3 + 0] -= nx * (overlap / 2)
+                this.positions[j3 + 2] -= nz * (overlap / 2)
+                const spdI = Math.hypot(this.velocities[i3 + 0], this.velocities[i3 + 2]) || 0.05
+                const spdJ = Math.hypot(this.velocities[j3 + 0], this.velocities[j3 + 2]) || 0.05
+                const dotI = this.velocities[i3 + 0] * nx + this.velocities[i3 + 2] * nz
+                const dotJ = this.velocities[j3 + 0] * nx + this.velocities[j3 + 2] * nz
+                if (dotI < 0) {
+                  this.velocities[i3 + 0] -= 2 * dotI * nx
+                  this.velocities[i3 + 2] -= 2 * dotI * nz
+                }
+                if (dotJ > 0) {
+                  this.velocities[j3 + 0] -= 2 * dotJ * nx
+                  this.velocities[j3 + 2] -= 2 * dotJ * nz
+                }
+                const vmI = Math.hypot(this.velocities[i3 + 0], this.velocities[i3 + 2]) || 0.001
+                const vmJ = Math.hypot(this.velocities[j3 + 0], this.velocities[j3 + 2]) || 0.001
+                this.velocities[i3 + 0] = (this.velocities[i3 + 0] / vmI) * spdI
+                this.velocities[i3 + 2] = (this.velocities[i3 + 2] / vmI) * spdI
+                this.velocities[j3 + 0] = (this.velocities[j3 + 0] / vmJ) * spdJ
+                this.velocities[j3 + 2] = (this.velocities[j3 + 2] / vmJ) * spdJ
+              }
+            }
+          }
+        }
+      }
+      if (!anyCollision) break
+    }
+
+    // Final pass: update Y, deposit positions, orientation
+    for (let i = 0; i < this.count; i++) {
+      const i3 = i * 3
+      this.positions[i3 + 1] = this.terrain.getHeight(this.positions[i3 + 0], this.positions[i3 + 2]) + 0.1
+      for (let j = 0; j < this.obstacles.objects.length; j++) {
+        const rock = this.obstacles.objects[j]
+        const w = this.obstacles.dims[j].w
+        const d = this.obstacles.dims[j].d
+        const rad = Math.sqrt(w * w + d * d) / 2
+        const dx = this.positions[i3 + 0] - rock.position.x
+        const dz = this.positions[i3 + 2] - rock.position.z
+        if (dx * dx + dz * dz < rad * rad) {
+          const obstacleBottom = rock.position.y - this.obstacles.halfHeights[j]
+          this.positions[i3 + 1] = Math.max(this.positions[i3 + 1], obstacleBottom + 0.12)
+        }
+      }
+      depositPositions[i3 + 0] = this.positions[i3 + 0]
+      depositPositions[i3 + 1] = this.positions[i3 + 1]
+      depositPositions[i3 + 2] = this.positions[i3 + 2]
       this.dummy.position.set(this.positions[i3 + 0], this.positions[i3 + 1] + 0.05, this.positions[i3 + 2])
       this.dummy.up.copy(this.terrain.getNormal(this.positions[i3 + 0], this.positions[i3 + 2]))
       this.dummy.lookAt(

@@ -58,7 +58,7 @@ async function init() {
 
   // System Setup
   const pheromoneConfig = { ...defaultPheromoneConfig }
-  const pheromones = new Pheromones(renderer, pheromoneConfig, 512)
+  const pheromones = new Pheromones(renderer, pheromoneConfig, 1024)
   const terrain = new Terrain(100, 256)
 
   // Apply pheromone texture to terrain material

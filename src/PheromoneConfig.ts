@@ -23,7 +23,7 @@ export const defaultPheromoneConfig: PheromoneConfig = {
   depositRateSearch: 6,
   depositRateReturn: 12,
   evaporationRate: 0.01,
-  diffusionStrength: 0.06,
+  diffusionStrength: 0,
   sensingRadius: 13,
   antennaeNoise: 0.3,
   minTrailStrength: 0.5,

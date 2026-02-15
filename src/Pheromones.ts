@@ -146,7 +146,7 @@ export class Pheromones {
     if (!this.depositPoints) {
       this.depositGeometry = new THREE.BufferGeometry()
       const mat = new THREE.PointsMaterial({
-        size: 1,
+        size: 0.4,
         sizeAttenuation: false,
         vertexColors: true,
         transparent: true,
@@ -163,8 +163,8 @@ export class Pheromones {
     const uvPositions = new Float32Array(count * 3)
     const gpuColors = new Float32Array(count * 3)
 
-    const spreadRadius = 1
-    const spreadFactor = 0.3
+    const spreadRadius = 0
+    const spreadFactor = 0
     const clampMax = 1000
 
     for (let i = 0; i < count; i++) {
